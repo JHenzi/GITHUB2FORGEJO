@@ -99,6 +99,8 @@ cp .envrc.example .env
   are never saved. The prompt only appears when running in a terminal.
 - **Protected**: `.env`, `.env.*` and `.envrc` are listed in `.gitignore`, and
   the script writes `.env` with `600` permissions.
+- `GITHUB_TOKEN` is optional: exporting it as empty (`GITHUB_TOKEN=`) skips the
+  prompt and migrates public repositories only.
 - To ignore `.env` for a single run (no loading and no save prompt), use
   `ENV_FILE=/dev/null ./github-forgejo-migrate.sh`.
 
@@ -114,7 +116,9 @@ can use the provided Docker environment.
    ```
    `setup_and_test.sh` asks whether to load `.env` for your GitHub settings, then
    runs the migration script with `ENV_FILE=/dev/null` so its option matrix isn't
-   overridden by `.env`. It never writes `.env` on its own (see step 4).
+   overridden by `.env`. It never writes `.env` on its own (see step 4). If
+   `GITHUB_USER` or `GITHUB_TOKEN` are missing, it asks for them once, not on
+   every test run.
 
 2. **Launch Environment and Run Migration**:
    ```bash
