@@ -99,7 +99,8 @@ cp .envrc.example .env
   are never saved. The prompt only appears when running in a terminal.
 - **Protected**: `.env`, `.env.*` and `.envrc` are listed in `.gitignore`, and
   the script writes `.env` with `600` permissions.
-- To ignore `.env` for a single run, use `ENV_FILE=/dev/null ./github-forgejo-migrate.sh`.
+- To ignore `.env` for a single run (no loading and no save prompt), use
+  `ENV_FILE=/dev/null ./github-forgejo-migrate.sh`.
 
 ### 2. Automated Development & Testing Environment
 
@@ -111,8 +112,9 @@ can use the provided Docker environment.
    cp .envrc.example .env
    # Edit .env and add your GITHUB_USER and GITHUB_TOKEN
    ```
-   `setup_and_test.sh` loads `.env` itself and then runs the migration script
-   with `ENV_FILE=/dev/null`, so its option matrix isn't overridden by `.env`.
+   `setup_and_test.sh` asks whether to load `.env` for your GitHub settings, then
+   runs the migration script with `ENV_FILE=/dev/null` so its option matrix isn't
+   overridden by `.env`. It never writes `.env` on its own (see step 4).
 
 2. **Launch Environment and Run Migration**:
    ```bash
@@ -121,12 +123,18 @@ can use the provided Docker environment.
    This script will:
    - Launch a Forgejo container on `http://localhost:3000`.
    - Create an admin user (`testuser`).
-   - Generate a Forgejo token and save it to your `.env`.
+   - Generate a Forgejo token for the test user.
    - Automatically execute the migration script.
 
 3. **Inspect Results**: Visit `http://localhost:3000` and log in with:
    - **User**: `testuser`
    - **Password**: `Password123!`
+
+4. **Optionally Save the Test Settings**: If you keep the container running, the
+   script asks whether to save the test `FORGEJO_URL`, `FORGEJO_USER` and
+   `FORGEJO_TOKEN` to `.env` (default: No), and warns if that would replace a
+   different Forgejo URL already in `.env`. If you remove the container, nothing
+   is offered because the token no longer works.
 
 ### Generate `GITHUB_TOKEN`
 

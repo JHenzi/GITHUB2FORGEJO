@@ -2,6 +2,22 @@
 # setup_and_test.sh - Automated Forgejo environment for testing migration script
 
 set -e
+
+# Optionally load GitHub settings from .env. This happens before the test settings below are
+# defined so .env can't override them. The migration script is run with ENV_FILE=/dev/null so
+# .env doesn't override the option matrix exported here either. .env is never written unless
+# you choose to save the test settings at the end.
+if [ -f .env ]; then
+	read -r -p "Load GitHub settings from .env? (Y/n): " load_env
+	if [[ ! "$load_env" =~ ^[nN] ]]; then
+		set -a
+		# shellcheck disable=SC1091
+		. ./.env
+		set +a
+	fi
+fi
+export ENV_FILE=/dev/null
+
 # Using development build to test bug #9629 fix (PR #11909)
 # Will be updated to stable v15.0.0 when released on April 16, 2026
 CONTAINER_IMAGE="codeberg.org/forgejo-experimental/forgejo:15.0-test"
@@ -11,16 +27,6 @@ FORGEJO_USER="testuser"
 FORGEJO_PASS="Password123!"
 FORGEJO_EMAIL="test@example.com"
 TOKEN_NAME="test-token-$(date +%s)"
-
-# Load GITHUB_* and other settings from .env. The migration script below is run with
-# ENV_FILE=/dev/null so the option matrix exported here is not overridden by .env.
-if [ -f .env ]; then
-	set -a
-	# shellcheck disable=SC1091
-	. ./.env
-	set +a
-fi
-export ENV_FILE=/dev/null
 
 # Cleanup previous runs
 if [ "$(docker ps -aq -f name=$CONTAINER_NAME)" ]; then
@@ -75,22 +81,6 @@ export FORGEJO_URL="http://localhost:$HTTP_PORT"
 export FORGEJO_USER="$FORGEJO_USER"
 export FORGEJO_TOKEN="$FORGEJO_TOKEN"
 
-# Update .env for direnv support
-touch .env
-grep -v "^FORGEJO_" .env >.env.tmp || true
-{
-	cat .env.tmp
-	echo "FORGEJO_URL=\"$FORGEJO_URL\""
-	echo "FORGEJO_USER=\"$FORGEJO_USER\""
-	echo "FORGEJO_TOKEN=\"$FORGEJO_TOKEN\""
-} >.env
-rm .env.tmp
-
-if command -v direnv >/dev/null 2>&1; then
-	echo "Updating direnv..."
-	direnv allow . || true
-fi
-
 echo "--------------------------------------------------"
 echo "Forgejo is ready!"
 echo "URL: $FORGEJO_URL"
@@ -101,9 +91,11 @@ echo "Now running github-forgejo-migrate.sh testing all option combinations"
 echo "Note: You may be prompted for GITHUB_USER and GITHUB_TOKEN if they are not in your environment."
 echo "--------------------------------------------------"
 
+github_user_prompted=false
 if [ -z "$GITHUB_USER" ]; then
 	read -r -p "Enter GITHUB_USER for testing (e.g. your username): " GITHUB_USER
 	export GITHUB_USER
+	github_user_prompted=true
 fi
 
 strategies=("mirror" "clone")
@@ -149,4 +141,39 @@ if [[ "$cleanup" =~ ^[yY]$ ]]; then
 else
 	echo "Keeping container running."
 	echo "To clean up later, run: docker rm -f $CONTAINER_NAME"
+
+	# Only offer to save the test settings while the container (and its token) still exists.
+	env_pattern='^[[:space:]]*(export[[:space:]]+)?FORGEJO_(URL|USER|TOKEN)='
+	save_vars="FORGEJO_URL FORGEJO_USER FORGEJO_TOKEN"
+	if $github_user_prompted; then
+		env_pattern='^[[:space:]]*(export[[:space:]]+)?(FORGEJO_(URL|USER|TOKEN)|GITHUB_USER)='
+		save_vars="$save_vars GITHUB_USER"
+	fi
+	current_url=""
+	if [ -f .env ]; then
+		current_url=$(grep -E '^[[:space:]]*(export[[:space:]]+)?FORGEJO_URL=' .env | tail -n 1 | cut -d= -f2- | tr -d "\"'" || true)
+	fi
+	if [ -n "$current_url" ] && [ "$current_url" != "$FORGEJO_URL" ]; then
+		echo "Warning: .env currently points FORGEJO_URL at $current_url; saving will replace it."
+	fi
+	read -r -p "Save the test settings ($save_vars) to .env? (y/N): " save_env
+	if [[ "$save_env" =~ ^[yY] ]]; then
+		(
+			umask 077
+			{
+				grep -Ev "$env_pattern" .env 2>/dev/null || true
+				for var in $save_vars; do
+					printf "%s='%s'\n" "$var" "${!var}"
+				done
+			} >.env.tmp
+		)
+		mv .env.tmp .env
+		chmod 600 .env
+		echo "Saved $save_vars to .env"
+
+		if command -v direnv >/dev/null 2>&1; then
+			echo "Updating direnv..."
+			direnv allow . || true
+		fi
+	fi
 fi

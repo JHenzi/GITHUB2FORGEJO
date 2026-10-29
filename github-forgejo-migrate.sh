@@ -349,7 +349,7 @@ for var in $SAVE_VARS; do
 	[[ "$preset_vars" == *" $var "* ]] && continue
 	[ -n "${!var}" ] && new_vars="$new_vars $var"
 done
-if [ -n "$new_vars" ] && [ -t 0 ]; then
+if [ -n "$new_vars" ] && [ -t 0 ] && [ "$ENV_FILE" != "/dev/null" ]; then
 	read -r -p "${yellow}Do you want to save these settings to ${ENV_FILE}? (Y/n):${reset} " save_answer
 	save_answer="$(echo "${save_answer:-Yes}" | xargs | tr '[:upper:]' '[:lower:]')"
 	if [[ "$save_answer" =~ ^y(es)?$ ]]; then
