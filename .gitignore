@@ -8,3 +8,8 @@
 !*.sh
 !README.md
 !.envrc.example
+
+# Never commit local configuration or secrets
+.env
+.env.*
+.envrc

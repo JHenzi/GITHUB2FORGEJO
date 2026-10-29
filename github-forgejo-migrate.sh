@@ -12,6 +12,14 @@
 #             "clone" will only clone once.
 #   FORCE_SYNC: Whether to delete repositories on Forgejo that no longer exist on GitHub.
 #              Answer Yes (to delete) or No.
+#   MIGRATE_ARCHIVE_STATUS: Whether to transfer the archived status of repositories (Yes/No).
+#   MIGRATE_FORKS: Whether to migrate fork repositories (Yes/No).
+#   DRY_RUN: Preview actions without executing (Yes/No).
+#   ENV_FILE: Path to the .env file to load (default: .env next to this script).
+#
+# Any of the variables above (except ENV_FILE) can be stored in a .env file. Non-empty
+# values in .env take precedence over the environment. After prompting, the script offers
+# to save the values you entered to .env so you are not asked again.
 
 # Define some color codes for output.
 red=$(tput setaf 1)
@@ -59,6 +67,112 @@ safe_curl() {
 command_exists bash
 command_exists curl
 command_exists jq
+
+# Configuration variables that may be read from the .env file.
+ENV_VARS="GITHUB_USER GITHUB_IS_ORG GITHUB_TOKEN FORGEJO_URL FORGEJO_USER FORGEJO_TOKEN STRATEGY FORCE_SYNC MIGRATE_ARCHIVE_STATUS MIGRATE_FORKS DRY_RUN"
+# Configuration variables that are offered to be saved to the .env file after prompting.
+# DRY_RUN is a per-run choice and GITHUB_IS_ORG is auto-detected, so neither is saved.
+SAVE_VARS="GITHUB_USER GITHUB_TOKEN FORGEJO_URL FORGEJO_USER FORGEJO_TOKEN STRATEGY FORCE_SYNC MIGRATE_ARCHIVE_STATUS MIGRATE_FORKS"
+
+ENV_FILE="${ENV_FILE:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.env}"
+
+# Function: Loads known configuration variables from a .env file without executing it.
+# Supports blank lines, comments, an optional "export " prefix, quoted values and CRLF line endings.
+# Non-empty values override variables already set in the environment.
+# Parameters:
+#   $1 - Path to the .env file
+load_env_file() {
+	local file="$1"
+	local line key value loaded=0
+
+	[ -f "$file" ] && [ -r "$file" ] || return 0
+
+	while IFS= read -r line || [ -n "$line" ]; do
+		line="${line%$'\r'}"
+		# Skip blank lines and comments.
+		[[ "$line" =~ ^[[:space:]]*(#|$) ]] && continue
+		[[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=[[:space:]]*(.*)$ ]] || continue
+		key="${BASH_REMATCH[2]}"
+		value="${BASH_REMATCH[3]}"
+
+		# Strip surrounding quotes (and any trailing comment after them), or a trailing comment on unquoted values.
+		if [[ "$value" =~ ^\"([^\"]*)\"[[:space:]]*(#.*)?$ ]] || [[ "$value" =~ ^\'([^\']*)\'[[:space:]]*(#.*)?$ ]]; then
+			value="${BASH_REMATCH[1]}"
+		else
+			value="$(echo "$value" | sed -E 's/[[:space:]]+#.*$//; s/[[:space:]]+$//')"
+		fi
+
+		# Only accept known configuration variables, and never let an empty value clobber the environment.
+		[[ " $ENV_VARS " == *" $key "* ]] || continue
+		[ -n "$value" ] || continue
+
+		printf -v "$key" '%s' "$value"
+		export "${key?}"
+		loaded=$((loaded + 1))
+	done <"$file"
+
+	if [ "$loaded" -gt 0 ]; then
+		printf "%bLoaded %d setting(s) from %s%b\n" "${cyan}" "$loaded" "$file" "${reset}" >&2
+	fi
+}
+
+# Function: Writes the given variables to the .env file, updating existing entries in place
+# and appending new ones. The file is created with owner-only permissions.
+# Boolean settings are written back as Yes/No.
+# Parameters:
+#   $1 - Path to the .env file
+#   $@ - Names of the variables to save
+save_env_file() {
+	local file="$1"
+	shift
+	local tmp="${file}.tmp.$$"
+	local line key var done_vars=" "
+
+	env_line() {
+		local value="${!1}"
+		case "$value" in
+		true) value="Yes" ;;
+		false) value="No" ;;
+		esac
+		printf "%s='%s'\n" "$1" "$value"
+	}
+
+	(
+		umask 077
+		: >"$tmp"
+	) || return 1
+
+	if [ -f "$file" ]; then
+		while IFS= read -r line || [ -n "$line" ]; do
+			if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*= ]]; then
+				key="${BASH_REMATCH[2]}"
+				for var in "$@"; do
+					if [ "$var" = "$key" ]; then
+						env_line "$key" >>"$tmp"
+						done_vars="$done_vars$key "
+						continue 2
+					fi
+				done
+			fi
+			printf '%s\n' "$line" >>"$tmp"
+		done <"$file"
+	fi
+
+	for var in "$@"; do
+		[[ "$done_vars" == *" $var "* ]] && continue
+		env_line "$var" >>"$tmp"
+	done
+
+	mv "$tmp" "$file" && chmod 600 "$file"
+}
+
+load_env_file "$ENV_FILE"
+
+# Remember which savable variables were already configured before prompting.
+preset_vars=" "
+for var in $SAVE_VARS; do
+	[ -n "${!var}" ] && preset_vars="$preset_vars$var "
+done
 
 # Function: if the passed variable is empty, prompt the user.
 # The function trims white space from the input.
@@ -227,6 +341,25 @@ if [[ "$DRY_RUN" =~ ^y(es)?$ ]]; then
 	DRY_RUN=true
 else
 	DRY_RUN=false
+fi
+
+# Offer to save any values that were entered interactively to the .env file.
+new_vars=""
+for var in $SAVE_VARS; do
+	[[ "$preset_vars" == *" $var "* ]] && continue
+	[ -n "${!var}" ] && new_vars="$new_vars $var"
+done
+if [ -n "$new_vars" ] && [ -t 0 ]; then
+	read -r -p "${yellow}Do you want to save these settings to ${ENV_FILE}? (Y/n):${reset} " save_answer
+	save_answer="$(echo "${save_answer:-Yes}" | xargs | tr '[:upper:]' '[:lower:]')"
+	if [[ "$save_answer" =~ ^y(es)?$ ]]; then
+		# shellcheck disable=SC2086 # Intentional word splitting of the variable name list.
+		if save_env_file "$ENV_FILE" $new_vars; then
+			echo -e "${green}Saved${new_vars} to ${ENV_FILE}${reset}"
+		else
+			echo -e "${red}Failed to write ${ENV_FILE}.${reset}" >&2
+		fi
+	fi
 fi
 
 echo -e "${green}Force sync is set to: ${FORCE_SYNC}${reset}"

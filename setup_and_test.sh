@@ -12,6 +12,16 @@ FORGEJO_PASS="Password123!"
 FORGEJO_EMAIL="test@example.com"
 TOKEN_NAME="test-token-$(date +%s)"
 
+# Load GITHUB_* and other settings from .env. The migration script below is run with
+# ENV_FILE=/dev/null so the option matrix exported here is not overridden by .env.
+if [ -f .env ]; then
+	set -a
+	# shellcheck disable=SC1091
+	. ./.env
+	set +a
+fi
+export ENV_FILE=/dev/null
+
 # Cleanup previous runs
 if [ "$(docker ps -aq -f name=$CONTAINER_NAME)" ]; then
 	echo "Cleaning up existing container..."

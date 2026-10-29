@@ -4,6 +4,13 @@
 > [fixed](https://codeberg.org/forgejo/forgejo/pulls/11909) in Forgejo v15.0.0 LTS.
 > Please update to v15+ to use the `mirror` strategy reliably.
 
+> [!NOTE]
+> **Updated: `.env` support is fixed.** The script now loads `.env` automatically
+> (no `direnv` or `source` needed), prefers its values over the environment, and
+> offers to save anything you type at a prompt to `.env` for next time. `.env` is
+> explicitly git-ignored and written with owner-only (`600`) permissions. See
+> [Configuration with `.env`](#configuration-with-env).
+
 > This script is inspired by and based on
 > [RGBCube's original version](https://github.com/RGBCube/GitHub2Forgejo),
 > rewritten in Bash.
@@ -30,7 +37,8 @@ that no longer exist on GitHub.
 - **Skip Forks**: Option to ignore forked repositories during migration.
 - **Dry Run Mode**: Preview what would happen without making changes.
 - Optional cleanup of outdated mirrors on Forgejo.
-- Fully terminal-interactive or configurable via environment variables.
+- Fully terminal-interactive or configurable via a `.env` file or environment
+  variables, with an option to save prompted answers to `.env`.
 
 ## Requirements
 
@@ -38,7 +46,7 @@ that no longer exist on GitHub.
 - `curl`
 - `jq`
 - `docker` (optional, for development environment)
-- `direnv` (optional, for automated configuration)
+- `direnv` (optional, no longer required to load `.env`)
 
 ## Usage
 
@@ -50,8 +58,8 @@ You can run the script directly:
 ./github-forgejo-migrate.sh
 ```
 
-You will be prompted for required values unless you provide them via environment
-variables:
+You will be prompted for required values unless you provide them in a `.env`
+file or via environment variables:
 
 | Variable                 | Description                                                                     |
 | ------------------------ | ------------------------------------------------------------------------------- |
@@ -66,18 +74,45 @@ variables:
 | `MIGRATE_ARCHIVE_STATUS` | Set to `Yes` (default) to transfer the archived status of repositories          |
 | `MIGRATE_FORKS`          | Set to `No` to skip fork repositories during migration (default: `Yes`)         |
 | `DRY_RUN`                | Set to `Yes` to preview actions without executing (dry run mode, default: `No`) |
+| `ENV_FILE`               | Path to the `.env` file to load (default: `.env` next to the script)            |
+
+### Configuration with `.env`
+
+The script reads `.env` from the script's directory on every run (override the
+location with `ENV_FILE=/path/to/file`). Start from the example:
+
+```bash
+cp .envrc.example .env
+# Edit .env and fill in your values
+```
+
+- **`.env` is preferred**: non-empty values in `.env` take precedence over
+  variables already set in your shell. Empty values (e.g. `GITHUB_TOKEN=""`) are
+  ignored, so they never clobber a value from the environment.
+- **Accepted formats**: `KEY=value`, `KEY="value"`, `KEY='value'`, an optional
+  `export ` prefix, `#` comments and Windows (CRLF) line endings.
+- **Safe to load**: the file is parsed, not executed, and only the variables in
+  the table above are read.
+- **Save prompted values**: if you're prompted for any setting, the script asks
+  `Do you want to save these settings to .env? (Y/n)` and writes only the values
+  you entered, updating existing lines in place. `DRY_RUN` and `GITHUB_IS_ORG`
+  are never saved. The prompt only appears when running in a terminal.
+- **Protected**: `.env`, `.env.*` and `.envrc` are listed in `.gitignore`, and
+  the script writes `.env` with `600` permissions.
+- To ignore `.env` for a single run, use `ENV_FILE=/dev/null ./github-forgejo-migrate.sh`.
 
 ### 2. Automated Development & Testing Environment
 
 If you want to test the script without setting up a real Forgejo instance, you
 can use the provided Docker environment.
 
-1. **Configure Environment**: Create a `.env` file (or use `direnv` with the
-   provided `.envrc`):
+1. **Configure Environment**: Create a `.env` file:
    ```bash
    cp .envrc.example .env
    # Edit .env and add your GITHUB_USER and GITHUB_TOKEN
    ```
+   `setup_and_test.sh` loads `.env` itself and then runs the migration script
+   with `ENV_FILE=/dev/null`, so its option matrix isn't overridden by `.env`.
 
 2. **Launch Environment and Run Migration**:
    ```bash
@@ -132,7 +167,8 @@ token**.
 4. Click `Applications` on the left
 5. Generate a token 5a. Expand the select permissions 5b. Set `repository` to
    `Read and Write`
-6. Either enter when prompted or save to FORGEJO_TOKEN w/
+6. Either enter when prompted (and choose to save it to `.env`), add
+   `FORGEJO_TOKEN=<Your token here>` to `.env`, or
    `export FORGEJO_TOKEN=<Your token here>`
 
 ## What It Does
