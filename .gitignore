@@ -13,5 +13,6 @@
 
 # Allow test directory (bats tests + helpers)
 !test/
+!test/*/
 !test/**.bats
 !test/**.bash
