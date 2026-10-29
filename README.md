@@ -29,12 +29,13 @@ that no longer exist on GitHub.
 - Migrates all (or selected) repositories for a GitHub user or organization.
 - **User or Org Detection**: Automatically detects if the account is a User or
   Organization.
-- Supports both **public** and **private** repositories.
+- Supports selecting **public**, **private**, or **both** repository visibilities.
 - **Mirror mode**: repositories stay in sync with GitHub.
 - **Clone mode**: one-time copy without ongoing sync.
 - **Archive Transfer**: Optionally transfers the archived status so archived
   repos remain read-only on Forgejo.
 - **Skip Forks**: Option to ignore forked repositories during migration.
+- **Visibility Filter**: Migrate only private, only public, or all repositories.
 - **Dry Run Mode**: Preview what would happen without making changes.
 - Optional cleanup of outdated mirrors on Forgejo.
 - Fully terminal-interactive or configurable via a `.env` file or environment
@@ -61,20 +62,26 @@ You can run the script directly:
 You will be prompted for required values unless you provide them in a `.env`
 file or via environment variables:
 
-| Variable                 | Description                                                                     |
-| ------------------------ | ------------------------------------------------------------------------------- |
-| `GITHUB_USER`            | GitHub username or organization name                                            |
-| `GITHUB_IS_ORG`          | (Optional) Force account type (`Yes`/`No`). Auto-detected if omitted.           |
-| `GITHUB_TOKEN`           | GitHub access token. **Required for private repos or Organizations.**           |
-| `FORGEJO_URL`            | Full URL to your Forgejo instance (e.g., `https://forgejo.example.com`)         |
-| `FORGEJO_USER`           | Forgejo username or organization to own the migrated repos                      |
-| `FORGEJO_TOKEN`          | Forgejo personal access token                                                   |
-| `STRATEGY`               | Either `mirror` (default) or `clone`                                            |
-| `FORCE_SYNC`             | Set to `Yes` to delete Forgejo repos that no longer exist on GitHub             |
-| `MIGRATE_ARCHIVE_STATUS` | Set to `Yes` (default) to transfer the archived status of repositories          |
-| `MIGRATE_FORKS`          | Set to `No` to skip fork repositories during migration (default: `Yes`)         |
-| `DRY_RUN`                | Set to `Yes` to preview actions without executing (dry run mode, default: `No`) |
-| `ENV_FILE`               | Path to the `.env` file to load (default: `.env` next to the script)            |
+| Variable                 | Description                                                                       |
+| ------------------------ | --------------------------------------------------------------------------------  |
+| `GITHUB_USER`            | GitHub username or organization name                                              |
+| `GITHUB_IS_ORG`          | (Optional) Force account type (`Yes`/`No`). Auto-detected if omitted.             |
+| `GITHUB_TOKEN`           | GitHub access token. **Required for private repos or Organizations.**             |
+| `FORGEJO_URL`            | Full URL to your Forgejo instance (e.g., `https://forgejo.example.com`)           |
+| `FORGEJO_USER`           | Forgejo username or organization to own the migrated repos                        |
+| `FORGEJO_TOKEN`          | Forgejo personal access token                                                     |
+| `STRATEGY`               | Either `mirror` (default) or `clone`                                              |
+| `MIRROR_DIRECTION`       | When `mirror`: `pull` (GitHub→Forgejo, default) or `push` (Forgejo→GitHub)        |
+| `PUSH_MIRROR_INTERVAL`   | Push mirror sync interval, e.g. `8h`, `1h` (default: `8h`). Push mirrors only    |
+| `PUSH_MIRROR_SYNC_ON_COMMIT` | Sync push mirror on every commit (default: `Yes`). Push mirrors only          |
+| `FORCE_SYNC`             | Set to `Yes` to delete Forgejo repos that no longer exist on GitHub               |
+| `MIGRATE_ARCHIVE_STATUS` | Set to `Yes` (default) to transfer the archived status of repositories            |
+| `MIGRATE_FORKS`          | Set to `No` to skip fork repositories during migration (default: `Yes`)           |
+| `VISIBILITY`             | Filter by visibility: `private`, `public`, or `both` (default: `both`)            |
+| `SORT`                   | Sort repos by: `created`, `updated`, `pushed`, or `full_name` (default: `pushed`) |
+| `SORT_DIRECTION`         | Sort direction: `asc` or `desc` (default: `desc`)                                 |
+| `DRY_RUN`                | Set to `Yes` to preview actions without executing (dry run mode, default: `No`)   |
+| `ENV_FILE`               | Path to the `.env` file to load (default: `.env` next to the script)              |
 
 ### Configuration with `.env`
 
@@ -99,46 +106,53 @@ cp .envrc.example .env
   are never saved. The prompt only appears when running in a terminal.
 - **Protected**: `.env`, `.env.*` and `.envrc` are listed in `.gitignore`, and
   the script writes `.env` with `600` permissions.
-- `GITHUB_TOKEN` is optional: exporting it as empty (`GITHUB_TOKEN=`) skips the
-  prompt and migrates public repositories only.
 - To ignore `.env` for a single run (no loading and no save prompt), use
-  `ENV_FILE=/dev/null ./github-forgejo-migrate.sh`.
+  `ENV_FILE=/dev/null ./github-forgejo-migrate.sh`. The test suite does this
+  so a local `.env` never overrides test settings.
 
 ### 2. Automated Development & Testing Environment
 
 If you want to test the script without setting up a real Forgejo instance, you
 can use the provided Docker environment.
 
-1. **Configure Environment**: Create a `.env` file:
-   ```bash
-   cp .envrc.example .env
-   # Edit .env and add your GITHUB_USER and GITHUB_TOKEN
-   ```
-   `setup_and_test.sh` asks whether to load `.env` for your GitHub settings, then
-   runs the migration script with `ENV_FILE=/dev/null` so its option matrix isn't
-   overridden by `.env`. It never writes `.env` on its own (see step 4). If
-   `GITHUB_USER` or `GITHUB_TOKEN` are missing, it asks for them once, not on
-   every test run.
+#### Validation Tests (no Docker required)
 
-2. **Launch Environment and Run Migration**:
-   ```bash
-   ./setup_and_test.sh
-   ```
-   This script will:
-   - Launch a Forgejo container on `http://localhost:3000`.
-   - Create an admin user (`testuser`).
-   - Generate a Forgejo token for the test user.
-   - Automatically execute the migration script.
+```bash
+bats test/validation.bats
+```
 
-3. **Inspect Results**: Visit `http://localhost:3000` and log in with:
-   - **User**: `testuser`
-   - **Password**: `Password123!`
+Input validation, default values, and settings summary output.
+No credentials needed.
 
-4. **Optionally Save the Test Settings**: If you keep the container running, the
-   script asks whether to save the test `FORGEJO_URL`, `FORGEJO_USER` and
-   `FORGEJO_TOKEN` to `.env` (default: No), and warns if that would replace a
-   different Forgejo URL already in `.env`. If you remove the container, nothing
-   is offered because the token no longer works.
+#### E2E Tests (requires Docker + GitHub credentials)
+
+The E2E tests migrate repos from your GitHub account into a throwaway Forgejo
+container. They assume your test account has a mix of repo types:
+
+- At least one **public** and one **private** repo
+- At least one **forked** repo
+- At least one **archived** repo
+
+```bash
+GITHUB_USER=youruser GITHUB_TOKEN=ghp_xxx bats test/
+```
+
+Or run individual suites:
+
+```bash
+bats test/strategy.bats     # clone, mirror pull, mirror push
+bats test/visibility.bats   # public, private, both
+bats test/options.bats      # dry-run, forks, archive, sort, force-sync
+```
+
+Each file spins up its own Forgejo container and tears it down after.
+
+#### Full suite
+
+```bash
+./setup_and_test.sh                                # validation only
+GITHUB_USER=you GITHUB_TOKEN=ghp_xxx ./setup_and_test.sh  # everything
+```
 
 ### Generate `GITHUB_TOKEN`
 
@@ -202,8 +216,9 @@ token**.
 
 ### ❓ What is the difference between mirroring and cloning?
 
-- **Mirroring**: Keeps the Forgejo repository in sync with the GitHub source.
-- **Cloning**: Copies the repo once. No updates will occur after that.
+- **Mirror pull** (`MIRROR_DIRECTION=pull`): Forgejo periodically fetches updates from GitHub. The GitHub repo is the source of truth.
+- **Mirror push** (`MIRROR_DIRECTION=push`): Forgejo pushes local changes back to GitHub. The Forgejo repo is the source of truth.
+- **Cloning** (`STRATEGY=clone`): One-time copy. No ongoing sync.
 
 ### ❓ Can I migrate specific repositories?
 
@@ -212,6 +227,13 @@ limit the scope by using a **GitHub Fine-grained Personal Access Token**. When
 creating the token, select **"Only select repositories"** instead of "All
 repositories". The script will then only see and migrate the repositories you
 explicitly selected.
+
+### ❓ What about the sort order?
+
+The sort order returned by the GitHub API is preserved through the entire
+migration pipeline — repos are migrated in the exact order requested. Note that
+`full_name` uses case-sensitive ASCII ordering (e.g. `Z` sorts before `a`),
+which is a GitHub API limitation.
 
 ## License
 
