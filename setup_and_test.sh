@@ -88,7 +88,7 @@ echo "User: $FORGEJO_USER"
 echo "Token: $FORGEJO_TOKEN"
 echo "--------------------------------------------------"
 echo "Now running github-forgejo-migrate.sh testing all option combinations"
-echo "Note: You may be prompted for GITHUB_USER and GITHUB_TOKEN if they are not in your environment."
+echo "Note: You will be asked once for GITHUB_USER and GITHUB_TOKEN if they are not in your environment or .env."
 echo "--------------------------------------------------"
 
 github_user_prompted=false
@@ -97,6 +97,16 @@ if [ -z "$GITHUB_USER" ]; then
 	export GITHUB_USER
 	github_user_prompted=true
 fi
+
+# Ask for the token once and export it (even if empty) so the migration script doesn't
+# prompt again on every run of the option matrix.
+github_token_prompted=false
+if [ -z "$GITHUB_TOKEN" ]; then
+	read -r -s -p "Enter GITHUB_TOKEN (optional, press Enter to only migrate public repos): " GITHUB_TOKEN
+	echo ""
+	github_token_prompted=true
+fi
+export GITHUB_TOKEN
 
 strategies=("mirror" "clone")
 booleans=("Yes" "No")
@@ -143,12 +153,14 @@ else
 	echo "To clean up later, run: docker rm -f $CONTAINER_NAME"
 
 	# Only offer to save the test settings while the container (and its token) still exists.
-	env_pattern='^[[:space:]]*(export[[:space:]]+)?FORGEJO_(URL|USER|TOKEN)='
 	save_vars="FORGEJO_URL FORGEJO_USER FORGEJO_TOKEN"
 	if $github_user_prompted; then
-		env_pattern='^[[:space:]]*(export[[:space:]]+)?(FORGEJO_(URL|USER|TOKEN)|GITHUB_USER)='
 		save_vars="$save_vars GITHUB_USER"
 	fi
+	if $github_token_prompted && [ -n "$GITHUB_TOKEN" ]; then
+		save_vars="$save_vars GITHUB_TOKEN"
+	fi
+	env_pattern="^[[:space:]]*(export[[:space:]]+)?(${save_vars// /|})="
 	current_url=""
 	if [ -f .env ]; then
 		current_url=$(grep -E '^[[:space:]]*(export[[:space:]]+)?FORGEJO_URL=' .env | tail -n 1 | cut -d= -f2- | tr -d "\"'" || true)

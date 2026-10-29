@@ -278,7 +278,12 @@ else
 	fi
 fi
 
-GITHUB_TOKEN=$(or_default "$GITHUB_TOKEN" "${red}GitHub access token (optional, only used for private repositories):${reset}" "" "yes")
+# The token is optional: if GITHUB_TOKEN is exported but empty, treat that as "no token" instead of prompting.
+if [ -z "$GITHUB_TOKEN" ] && printenv GITHUB_TOKEN >/dev/null; then
+	echo -e "${cyan}GITHUB_TOKEN is set but empty, continuing without a token (public repositories only).${reset}" >&2
+else
+	GITHUB_TOKEN=$(or_default "$GITHUB_TOKEN" "${red}GitHub access token (optional, only used for private repositories):${reset}" "" "yes")
+fi
 FORGEJO_URL=$(or_default "$FORGEJO_URL" "${green}Forgejo instance URL (with https://):${reset}" "")
 # Remove any trailing slash.
 FORGEJO_URL="${FORGEJO_URL%/}"
